@@ -7,6 +7,7 @@ pub fn run(
     vcf_path: PathBuf,
     weights_path: PathBuf,
     meta_path: PathBuf,
+    eigenval_path: PathBuf,
     sample_meta_path: Option<PathBuf>,
     output_path: PathBuf,
 ) -> Result<()> {
@@ -16,6 +17,7 @@ pub fn run(
     pb.set_message("Loading reference files...");
     let snps = reference::load_weights(&weights_path)?;
     let glad_meta = reference::load_meta(&meta_path)?;
+    let eigenvalues = reference::load_eigenvalues(&eigenval_path)?;
     pb.println(format!(
         "Reference: {} SNPs, {} PCs, build {}",
         snps.len(),
@@ -62,7 +64,7 @@ pub fn run(
     }
 
     pb.set_message("Projecting to PC space...");
-    let pc_coords = pca::project(&vcf_data, &snps);
+    let pc_coords = pca::project(&vcf_data, &snps, &eigenvalues);
 
     pb.set_message("Fitting GMM...");
     let distributions = gmm::fit(&pc_coords, &vcf_data.samples, meta.as_ref(), &glad_meta)

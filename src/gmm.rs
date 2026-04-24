@@ -107,9 +107,11 @@ fn build_features(
 
     if use_age {
         let meta = meta.unwrap();
+        let pc_sd = 1.0 / (glad_meta.n_db_samples as f64).sqrt();
         for (i, id) in sample_order.iter().enumerate() {
             if let Some(info) = meta.map.get(id) {
-                features[(i, n_pcs)] = (info.age - glad_meta.age_mean) / glad_meta.age_sd;
+                let z_age = (info.age - glad_meta.age_mean) / glad_meta.age_sd;
+                features[(i, n_pcs)] = z_age * pc_sd;
             }
         }
     }

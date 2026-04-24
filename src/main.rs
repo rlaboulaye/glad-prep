@@ -34,6 +34,10 @@ enum Command {
         #[arg(long, default_value = "glad_meta.json")]
         meta: PathBuf,
 
+        /// GLAD PCA eigenvalues file
+        #[arg(long, default_value = "db_pca.eigenval")]
+        eigenval: PathBuf,
+
         /// Sample metadata TSV (columns: sample_id, sex, age)
         #[arg(long)]
         sample_meta: Option<PathBuf>,
@@ -58,8 +62,8 @@ enum Command {
 fn main() -> Result<()> {
     let cli = Cli::parse();
     match cli.command {
-        Command::Prepare { vcf, weights, meta, sample_meta, output } => {
-            prepare::run(vcf, weights, meta, sample_meta, output)
+        Command::Prepare { vcf, weights, meta, eigenval, sample_meta, output } => {
+            prepare::run(vcf, weights, meta, eigenval, sample_meta, output)
         }
         Command::Check { vcf, weights } => {
             check::run(vcf, weights)

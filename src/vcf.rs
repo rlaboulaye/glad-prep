@@ -123,6 +123,8 @@ pub fn extract(vcf_path: &Path, snps: &[SnpWeight]) -> Result<VcfData> {
                     alt_count += sample_alt as u32;
                     n_alleles += sample_n as u32;
                     dosages[sample_idx] = sample_alt;
+                } else {
+                    dosages[sample_idx] = 255; // missing → mean-impute in projection
                 }
             }
 
