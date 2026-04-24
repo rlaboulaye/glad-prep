@@ -4,10 +4,11 @@ use anyhow::{Context, Result};
 use linfa::traits::Fit;
 use linfa::DatasetBase;
 use linfa_clustering::GaussianMixtureModel;
-use ndarray::{Array2, Axis};
+use ndarray::{Array2, ArrayView2, Axis};
 use serde::Serialize;
 
-const MAX_COMPONENTS: usize = 8;
+// Query cohorts are expected to be relatively homogeneous; BIC handles the lower end naturally.
+const MAX_COMPONENTS: usize = 5;
 const GMM_MAX_ITER: u64 = 200;
 const GMM_RUNS: usize = 5;
 
@@ -126,34 +127,122 @@ fn select_rows(matrix: &Array2<f64>, rows: &[usize]) -> Array2<f64> {
     result
 }
 
+fn cholesky_log_det(mat: ArrayView2<f64>) -> Option<f64> {
+    let d = mat.nrows();
+    let mut l = Array2::<f64>::zeros((d, d));
+    for i in 0..d {
+        for j in 0..=i {
+            let mut s = mat[(i, j)];
+            for p in 0..j {
+                s -= l[(i, p)] * l[(j, p)];
+            }
+            if i == j {
+                if s <= 0.0 {
+                    return None;
+                }
+                l[(i, j)] = s.sqrt();
+            } else {
+                l[(i, j)] = s / l[(j, j)];
+            }
+        }
+    }
+    Some(2.0 * (0..d).map(|i| l[(i, i)].ln()).sum::<f64>())
+}
+
+fn gmm_log_likelihood(model: &GaussianMixtureModel<f64>, data: &Array2<f64>) -> Result<f64> {
+    let weights = model.weights();
+    let means = model.means();
+    let precisions = model.precisions();
+    let k = weights.len();
+    let n = data.nrows();
+    let d = data.ncols();
+    let log_2pi = (2.0 * std::f64::consts::PI).ln();
+
+    let mut log_norm = Vec::with_capacity(k);
+    for c in 0..k {
+        let prec = precisions.index_axis(Axis(0), c);
+        let log_det_prec = cholesky_log_det(prec)
+            .ok_or_else(|| anyhow::anyhow!("precision matrix not positive definite for component {}", c))?;
+        log_norm.push(weights[c].ln() - 0.5 * (d as f64) * log_2pi + 0.5 * log_det_prec);
+    }
+
+    let mut total_ll = 0.0;
+    for i in 0..n {
+        let x = data.row(i);
+        let mut log_probs = Vec::with_capacity(k);
+        for c in 0..k {
+            let prec = precisions.index_axis(Axis(0), c);
+            let mu = means.row(c);
+            let mut mahal = 0.0;
+            for j in 0..d {
+                let mut v = 0.0;
+                for m in 0..d {
+                    v += prec[(j, m)] * (x[m] - mu[m]);
+                }
+                mahal += (x[j] - mu[j]) * v;
+            }
+            log_probs.push(log_norm[c] - 0.5 * mahal);
+        }
+        let max_lp = log_probs.iter().cloned().fold(f64::NEG_INFINITY, f64::max);
+        total_ll += max_lp + log_probs.iter().map(|&lp| (lp - max_lp).exp()).sum::<f64>().ln();
+    }
+
+    Ok(total_ll)
+}
+
+fn gmm_n_params(k: usize, d: usize) -> usize {
+    (k - 1) + k * d + k * d * (d + 1) / 2
+}
+
+fn bic_score(log_lik: f64, n_params: usize, n: usize) -> f64 {
+    -2.0 * log_lik + (n_params as f64) * (n as f64).ln()
+}
+
 fn fit_gmm(data: &Array2<f64>) -> Result<FittedGmm> {
     let n = data.nrows();
-    let n_dims = data.ncols();
+    let d = data.ncols();
     anyhow::ensure!(n >= 10, "too few samples to fit GMM ({})", n);
 
-    // K heuristic: roughly one component per 200 samples, capped at MAX_COMPONENTS
-    let k = (n / 200).clamp(1, MAX_COMPONENTS);
-
     let dataset = DatasetBase::from(data.clone());
+    let mut best_bic = f64::INFINITY;
+    let mut best_model: Option<GaussianMixtureModel<f64>> = None;
+    let mut best_k = 1usize;
 
-    // Multiple restarts; keep the first successful fit
-    // TODO: implement BIC-based K selection with log-likelihood scoring
-    let mut last_err = None;
-    for _ in 0..GMM_RUNS {
-        match GaussianMixtureModel::params(k)
-            .max_n_iterations(GMM_MAX_ITER)
-            .fit(&dataset)
-        {
-            Ok(model) => return serialize_gmm(&model, k, n_dims),
-            Err(e) => last_err = Some(e),
+    for k in 1..=MAX_COMPONENTS {
+        let mut best_ll = f64::NEG_INFINITY;
+        let mut best_model_for_k: Option<GaussianMixtureModel<f64>> = None;
+
+        for _ in 0..GMM_RUNS {
+            match GaussianMixtureModel::params(k)
+                .max_n_iterations(GMM_MAX_ITER)
+                .fit(&dataset)
+            {
+                Ok(model) => {
+                    if let Ok(ll) = gmm_log_likelihood(&model, data) {
+                        if ll > best_ll {
+                            best_ll = ll;
+                            best_model_for_k = Some(model);
+                        }
+                    }
+                }
+                Err(_) => {}
+            }
+        }
+
+        if let Some(model) = best_model_for_k {
+            let bic = bic_score(best_ll, gmm_n_params(k, d), n);
+            if bic < best_bic {
+                best_bic = bic;
+                best_k = k;
+                best_model = Some(model);
+            }
         }
     }
 
-    Err(anyhow::anyhow!(
-        "GMM fitting failed after {} runs: {:?}",
-        GMM_RUNS,
-        last_err
-    ))
+    match best_model {
+        Some(model) => serialize_gmm(&model, best_k, d),
+        None => Err(anyhow::anyhow!("GMM fitting failed for all k in 1..={}", MAX_COMPONENTS)),
+    }
 }
 
 fn serialize_gmm(
