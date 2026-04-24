@@ -68,8 +68,26 @@ pub fn run(
     let distributions = gmm::fit(&pc_coords, &vcf_data.samples, meta.as_ref(), &glad_meta)
         .context("fitting GMM")?;
 
+    let per_sex_counts = meta.as_ref().and_then(|m| {
+        matches!(
+            m.mode,
+            sample_meta::MetaMode::SexAndAge | sample_meta::MetaMode::SexOnly
+        )
+        .then(|| {
+            let (female, male) = m.count_by_sex(&vcf_data.samples);
+            output::PerSexCounts { female, male }
+        })
+    });
+
     pb.set_message("Writing output...");
-    output::write(&output_path, &snps, &vcf_data, distributions, &glad_meta)?;
+    output::write(
+        &output_path,
+        &snps,
+        &vcf_data,
+        distributions,
+        &glad_meta,
+        per_sex_counts,
+    )?;
 
     pb.finish_and_clear();
     println!("Output written to {}", output_path.display());

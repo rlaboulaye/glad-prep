@@ -27,6 +27,25 @@ pub struct SampleMeta {
     pub mode: MetaMode,
 }
 
+impl SampleMeta {
+    /// Count `(female, male)` over the given sample IDs. Samples without sex
+    /// info (or not in the metadata map) are silently skipped, so callers
+    /// should only invoke this when `mode` includes sex.
+    pub fn count_by_sex(&self, sample_ids: &[String]) -> (u32, u32) {
+        let mut female = 0u32;
+        let mut male = 0u32;
+        for id in sample_ids {
+            if let Some(info) = self.map.get(id) {
+                match info.sex {
+                    Sex::Female => female += 1,
+                    Sex::Male => male += 1,
+                }
+            }
+        }
+        (female, male)
+    }
+}
+
 pub fn load(path: &Path) -> Result<SampleMeta> {
     let mut rdr = csv::ReaderBuilder::new()
         .delimiter(b'\t')

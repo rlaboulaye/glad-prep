@@ -16,11 +16,19 @@ struct SnpCount {
     n_alleles: u32,
 }
 
+#[derive(Serialize, Debug, Clone, Copy)]
+pub struct PerSexCounts {
+    pub female: u32,
+    pub male: u32,
+}
+
 #[derive(Serialize)]
 struct Output {
     version: &'static str,
     reference_build: String,
     n_samples: usize,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    per_sex_counts: Option<PerSexCounts>,
     n_snps_attempted: usize,
     n_snps_found: usize,
     counts: Vec<SnpCount>,
@@ -33,6 +41,7 @@ pub fn write(
     vcf_data: &VcfData,
     distributions: Distributions,
     glad_meta: &GladMeta,
+    per_sex_counts: Option<PerSexCounts>,
 ) -> Result<()> {
     let n_samples = vcf_data.samples.len();
     let n_snps_found = vcf_data.snps.iter().filter(|s| s.is_some()).count();
@@ -56,6 +65,7 @@ pub fn write(
         version: "1.0",
         reference_build: glad_meta.reference_build.clone(),
         n_samples,
+        per_sex_counts,
         n_snps_attempted: snps.len(),
         n_snps_found,
         counts,
